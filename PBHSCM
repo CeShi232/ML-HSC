@@ -3,18 +3,12 @@
 # Description:
 The code was created to implement the ML models to predict peripheral blood hematopoietic stem cell mobilization in healthy volunteers.
 
-#####共线性变量和无关变量####
+##### Collinear variables or irrelevant features####
 library(ggplot2)
 col_types <- sapply(result_value, class)
-# 筛选不是数字的列（即不是numeric类型的列）
 non_numeric_cols <- col_types != "numeric"
-
-# 提取不是数字的列
 result_value_non_numeric <- result_value[, non_numeric_cols]
-
-# 查看结果
 print(result_value_non_numeric)
-
 result_value$性别.男1.女2.=as.numeric(result_value$性别.男1.女2.)
 result_value$MCHC=as.numeric(result_value$MCHC)
 result_value$血小板 =as.numeric(result_value$血小板 )
@@ -23,23 +17,13 @@ result_value$肌酐=as.numeric(result_value$肌酐)
 result_value$age=as.numeric(result_value$age)
 result_value$times =as.numeric(result_value$times )
 result_value$收集年份=as.numeric(result_value$收集年份)
-
 colnames(result_value) <- c("Gender", "Neutrophil", "Hemoglobin","RBC","HCT","MCV","MCHC","Platelets","Albumin","Globulin","Triglycerides","TC","LDL","Uric acid","Creatinine","BUN","GFR","BG","Weight","Height","BMI","WBC","Monocyte","Lymphocyte","Day4 CD34+ cell","Total mobilizer dose","Mobilizer dose per body weight","Age","Dosage frequency per day","Year of data collection")
-
-
-# 步骤1: 计算相关矩阵
 cor_matrix <- cor(result_value, use = "complete.obs")  # 使用complete.obs来处理缺失值
 test_result <- cor.test(result_value$`Day4 CD34+ cell`, result_value$BUN, method = "pearson")
-# 步骤2: 检查相关矩阵
 print(cor_matrix)
 write.csv(cor_matrix, "cor_matrix.csv", row.names = TRUE)
-
-# 步骤3: 使用阈值来找出共线性变量
-# 例如，我们可以设置阈值为0.7，这意味着任何相关性高于0.7的变量对将被视为共线性
 threshold <- 0.7
 high_cor_var <- findCorrelation(cor_matrix, cutoff = threshold, verbose = TRUE)
-
-# 如果需要，你可以可视化相关矩阵的热图来更好地理解变量之间的关系
 ggplot(data = as.data.frame(as.table(cor_matrix)), aes(Var1, Var2, fill = Freq)) +
   geom_tile(color = "white") +
   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
@@ -50,6 +34,171 @@ ggplot(data = as.data.frame(as.table(cor_matrix)), aes(Var1, Var2, fill = Freq))
         axis.text.y = element_text(size = 12)) +
   coord_fixed() +
   ggtitle("Correlation Matrix Heatmap")
-
-# 步骤4: 排除共线性变量
 result_value_clean <- result_value[, !names(result_value) %in% names(result_value)[high_cor_var]]
+
+
+
+#### Linear Regression####
+library(caret)
+set.seed()
+index <- sample(nrow(result), round(nrow(result) * 0.7))
+train_data <- result[index, ]
+test_data <- result[-index, ]
+train_control <- trainControl(method = "cv", number = 10,savePredictions = "final")
+formula <- D4.CD34 ~ 性别.男1.女2. + 尿酸 + 基线白细胞.X109.l. + sum_mobilizer + 血小板 +
+  血红蛋白.g.l. + 体重.Kg. + 升高.米. + 中性粒细胞数 + 单核细胞数 + 红细胞.x10.12.l. +
+  肌酐 + MCHC + HCT + 淋巴细胞数目 + 甘油三酯 + LDL + 白蛋白 +
+  times + age + mobilizer_bw + 收集年份
+model_cv <- train(formula, data = train_data, method = "lm", trControl = train_control)
+print(model_cv)
+predictions_cv <- predict(model_cv, newdata = test_data)
+predictions_bin_cv <- ifelse(predictions_cv > 500, 1, 0)
+library(pROC)
+roc_curve_cv <- roc(test_data$D4_CD34_binary, predictions_bin_cv)
+print(roc_curve_cv$auc)
+plot(roc_curve_cv, main = "ROC Curve", print.auc = TRUE)
+plot(roc_curve_cv,  col="blue", main=" ROC Curves") 
+
+
+#### Decision Tree####
+library(rpart)     
+library(rpart.plot) 
+library(caret)      
+result_factor<- data
+result_factor$D4_CD34_binary <- as.factor(ifelse(result_factor$D4_CD34_binary == 1, "pos", "neg"))
+levels(result_factor$D4_CD34_binary) <- c("neg", "pos") 
+train_control <- trainControl(
+  method = "cv",      
+  number = 10,       
+  search = "grid",    
+  classProbs = TRUE,  
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final" 
+)
+set.seed()
+model3 <- train(
+  D4_CD34_binary ~ 性别.男1.女2. + 尿酸 + 基线白细胞.X109.l. + sum_mobilizer + 血小板 +
+    血红蛋白.g.l. + 体重.Kg. + 升高.米. + 中性粒细胞数 + 单核细胞数 + 红细胞.x10.12.l. +
+    肌酐 + MCHC + HCT + 淋巴细胞数目 + 甘油三酯 + LDL + 白蛋白 +
+    times + age + mobilizer_bw + 收集年份,
+  data = result_factor,
+  method = "rpart",
+  trControl = train_control,
+  tuneLength = 10,   
+  metric = "ROC"   
+)
+print(model3)
+rpart.plot(model3$finalModel, type = 3, fallen.leaves = TRUE)
+importance <- varImp(model3, scale = FALSE)
+print(importance)
+
+predictions <- model3$pred
+best_predictions <- subset(model3$pred, cp == model3$bestTune$cp)
+roc_curve <- roc(best_predictions$obs, best_predictions$pos)
+plot(roc_curve, main = "ROC Curve for Optimal Model", col = "blue", print.auc = TRUE)
+lines(roc_curve, col="red", lty=1)
+best_threshold <- coords(roc_curve, "best", ret = "threshold")
+fold_accuracies <- numeric(10)
+for (fold in unique(best_predictions$Resample)) {
+  fold_data <- subset(best_predictions, Resample == fold)
+  predicted_classes <- ifelse(fold_data$pos > 0.5, "pos", "neg")
+  predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+  accuracy <- sum(predicted_classes == fold_data$obs) / nrow(fold_data)
+  fold_accuracies[as.numeric(gsub("Fold", "", fold))] <- accuracy
+  
+  cat("Fold", fold, "Accuracy:", accuracy, "\n")
+}
+mean_accuracy <- mean(fold_accuracies)
+
+
+
+#### Random Forest####
+library(randomForest)  
+result_factor$D4_CD34_binary=as.numeric(result_factor$D4.CD34>500)
+result_factor$D4_CD34_binary <- as.factor(ifelse(result_factor$D4_CD34_binary == 1, "pos", "neg"))
+levels(result_factor$D4_CD34_binary) <- c("neg", "pos") 
+set.seed()
+train_control <- trainControl(method = "cv",  
+                              number = 10,    
+                              classProbs = TRUE,  
+                              summaryFunction = twoClassSummary,  
+                              verboseIter = FALSE,
+                              savePredictions = "final" )  
+rf_model <- train(D4_CD34_binary ~ 性别.男1.女2.+ 尿酸+基线白细胞.X109.l.+sum_mobilizer+血小板
+                  +血红蛋白.g.l.+体重.Kg.+升高.米.+中性粒细胞数+单核细胞数+红细胞.x10.12.l.
+                  +肌酐+MCHC+HCT+淋巴细胞数目+甘油三酯+LDL+白蛋白
+                  +times+age+mobilizer_bw,  
+                  data = result_factor,
+                  method = "rf",
+                  trControl = train_control,
+                  tuneLength = 3,
+                  importance = TRUE,
+                  ntree = 323)
+print(rf_model)
+best_predictions <- subset(rf_model $pred, mtry == rf_model $bestTune$mtry)
+roc_curve <- roc(best_predictions$obs, best_predictions$pos)
+plot(roc_curve, main = "ROC Curve for Optimal Model", col = "blue", print.auc = TRUE)
+lines(roc_curve, col="green", lty=2)
+fold_accuracies <- numeric(10)
+for (fold in unique(best_predictions$Resample)) {
+  fold_data <- subset(best_predictions, Resample == fold)
+  predicted_classes <- ifelse(fold_data$pos > 0.5, "pos", "neg")
+  predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+  accuracy <- sum(predicted_classes == fold_data$obs) / nrow(fold_data)
+  fold_accuracies[as.numeric(gsub("Fold", "", fold))] <- accuracy
+  cat("Fold", fold, "Accuracy:", accuracy, "\n")
+}
+mean_accuracy <- mean(fold_accuracies)
+predicted_classes <- ifelse(best_predictions$pos > 0.5, "pos", "neg")
+predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+confusion_matrix <- confusionMatrix(predicted_classes, best_predictions$obs)
+print(confusion_matrix)
+
+
+
+
+#### Support Vector Machine####
+library(caret)
+library(e1071)
+set.seed(100)
+normalization_data$D4_CD34_binary <- as.factor(normalization_data$D4_CD34_binary)
+levels(normalization_data$D4_CD34_binary) <- c("Yes", "No")
+train_control <- trainControl(
+  method = "cv",
+  number = 10,
+  search = "grid", 
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary, 
+  allowParallel = TRUE , 
+  savePredictions = "final")
+tuneGrid <- expand.grid(sigma = seq(0.01, 1, by = 0.05), C = seq(1, 100, by = 10))
+model5 <- train(
+  D4_CD34_binary ~性别.男1.女2.+尿酸+基线白细胞.X109.l.+sum_mobilizer+血小板
+  +血红蛋白.g.l.+体重.Kg.+升高.米.+中性粒细胞数+单核细胞数+红细胞.x10.12.l.
+  +肌酐+MCHC+HCT+淋巴细胞数目+甘油三酯+LDL+白蛋白
+  +times+age+mobilizer_bw,
+  data = normalization_data,
+  method = "svmRadial",
+  trControl = train_control,
+  tuneGrid = tuneGrid,  
+  metric = "ROC",  
+)
+print(model5)
+print(model5$bestTune)
+best_predictions <- subset(model5$pred, sigma == model5$bestTune$sigma)
+roc_curve <- roc(best_predictions$obs, best_predictions$No)
+plot(roc_curve, main = "ROC Curve for Optimal Model", col = "blue", print.auc = TRUE)
+lines(roc_curve, col="yellow", lty=1)
+fold_accuracies <- numeric(10)
+for (fold in unique(best_predictions$Resample)) {
+  fold_data <- subset(best_predictions, Resample == fold)
+  predicted_classes <- ifelse(fold_data$pos > 0.5, "pos", "neg")
+  predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+  accuracy <- sum(predicted_classes == fold_data$obs) / nrow(fold_data)
+  fold_accuracies[as.numeric(gsub("Fold", "", fold))] <- accuracy
+  cat("Fold", fold, "Accuracy:", accuracy, "\n")
+}
+mean_accuracy <- mean(fold_accuracies)
+
+
+
