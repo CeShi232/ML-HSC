@@ -202,3 +202,145 @@ mean_accuracy <- mean(fold_accuracies)
 
 
 
+#### K Nearest Neighbours####
+library(caret)
+library(pROC)
+result2=result[,c(4,12,13,14,15,17,18,19,21,23,24,25,30,31,33,34,35,53,55,56,54,57,59,38)]
+result1=result[,c(4,12,13,14,15,17,18,19,21,23,24,25,30,31,33,34,35,53,55,56,54,57,59)]
+for (i in 1:23){
+  for (j in 1:896){
+    result2[j,i]=(result1[j,i]-min(result1[,i])) / (max(result1[,i])-min(result1[,i]))
+    
+  }
+}
+result2$D4_CD34_binary=as.numeric(result2$D4.CD34>500)
+result2$D4_CD34_binary <- as.factor(ifelse(result2$D4_CD34_binary == 1, "pos", "neg"))
+levels(result_factor$D4_CD34_binary) <- c("neg", "pos")
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,          
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final")
+tune_grid <- expand.grid(k = seq(3, 15, by = 2))  
+set.seed(772)
+model6 <- train(
+  D4_CD34_binary ~ 性别.男1.女2.+尿酸 + 基线白细胞.X109.l. + sum_mobilizer + 血小板  
+  + 血红蛋白.g.l. + 体重.Kg. + 升高.米. + 中性粒细胞数 + 单核细胞数 + 红细胞.x10.12.l. +  
+    肌酐 + MCHC + HCT + 淋巴细胞数目 + 甘油三酯 + LDL + 白蛋白 +  
+    times + age + mobilizer_bw,   
+  data = result2,
+  method = "knn",
+  trControl = ctrl,
+  metric = "ROC",        
+  tuneGrid = tune_grid,  
+  preProcess = c("center", "scale")  
+)
+print(model6)
+plot(model6)            
+best_predictions <- subset(model6$pred, k == model6$bestTune$k)
+roc_curve <- roc(best_predictions$obs, best_predictions$pos)
+plot(roc_curve, main = "ROC Curve for Optimal Model", col = "blue", print.auc = TRUE)
+lines(roc_curve, col="purple", lty=2)
+fold_accuracies <- numeric(10)
+for (fold in unique(best_predictions$Resample)) {
+  fold_data <- subset(best_predictions, Resample == fold)
+  predicted_classes <- ifelse(fold_data$pos > 0.5, "pos", "neg")
+  predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+  accuracy <- sum(predicted_classes == fold_data$obs) / nrow(fold_data)
+  fold_accuracies[as.numeric(gsub("Fold", "", fold))] <- accuracy
+  cat("Fold", fold, "Accuracy:", accuracy, "\n")
+}
+mean_accuracy <- mean(fold_accuracies)
+
+
+
+
+
+#### AdaBoost####
+library(caret)
+library(ada)
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,          
+  summaryFunction = twoClassSummary, 
+  savePredictions = "final")
+set.seed(9)
+model7 <- train(
+  D4_CD34_binary ~ 尿酸 + 基线白细胞.X109.l. + sum_mobilizer + 血小板 + 血红蛋白.g.l. + 体重.Kg. + 升高.米. + 中性粒细胞数 + 单核细胞数 + 红细胞.x10.12.l. + 肌酐 + MCHC + HCT + 淋巴细胞数目 + 甘油三酯 + LDL + 白蛋白 + times + age + mobilizer_bw,
+  data = result2,
+  method = "ada",            
+  trControl = ctrl,
+  metric = "ROC",            
+  tuneLength = 5             
+)
+print(model7)
+plot(model7) 
+best_predictions <- subset(model7$pred, maxdepth== model7$bestTune$maxdepth)
+roc_curve <- roc(best_predictions$obs, best_predictions$pos)
+plot(roc_curve, main = "ROC Curve for Optimal Model", col = "blue", print.auc = TRUE)
+lines(roc_curve, col="gray", lty=1)
+fold_accuracies <- numeric(10)
+for (fold in unique(best_predictions$Resample)) {
+  fold_data <- subset(best_predictions, Resample == fold)
+  predicted_classes <- ifelse(fold_data$pos > 0.5, "pos", "neg")
+  predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+  accuracy <- sum(predicted_classes == fold_data$obs) / nrow(fold_data)
+  fold_accuracies[as.numeric(gsub("Fold", "", fold))] <- accuracy
+  cat("Fold", fold, "Accuracy:", accuracy, "\n")
+}
+mean_accuracy <- mean(fold_accuracies)
+predicted_classes <- ifelse(best_predictions$pos > 0.5, "pos", "neg")
+predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+confusion_matrix <- confusionMatrix(predicted_classes, best_predictions$obs)
+print(confusion_matrix)
+
+
+
+
+##### Neural Networks####
+library(caret)
+library(nnet)
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,        
+  summaryFunction = twoClassSummary, 
+  savePredictions = "final")
+tune_grid <- expand.grid(
+  size = c(3, 5, 7),     
+  decay = c(0, 0.1, 0.5) 
+)
+set.seed(123)
+model8 <- train(
+  D4_CD34_binary~  尿酸+基线白细胞.X109.l.+sum_mobilizer+血小板
+  +血红蛋白.g.l.+体重.Kg.+升高.米.+中性粒细胞数+单核细胞数+红细胞.x10.12.l.
+  +肌酐+MCHC+HCT+淋巴细胞数目+甘油三酯+LDL+白蛋白
+  +times+age+mobilizer_bw,
+  data = result2,
+  method = "nnet",
+  trControl = ctrl,
+  metric = "ROC",        
+  tuneGrid = tune_grid,  
+  preProcess = c("center", "scale"), 
+  trace = FALSE         
+)
+print(model8)
+plot(model8)              
+best_predictions <- subset(model8$pred, size== model8$bestTune$size)
+roc_curve <- roc(best_predictions$obs, best_predictions$pos)
+lines(roc_curve, col="orange", lty=1)
+plot(roc_curve, main = "ROC Curve for Optimal Model", col = "blue", print.auc = TRUE)
+fold_accuracies <- numeric(10)
+for (fold in unique(best_predictions$Resample)) {
+  fold_data <- subset(best_predictions, Resample == fold)
+  predicted_classes <- ifelse(fold_data$pos > 0.5, "pos", "neg")
+  predicted_classes <- factor(predicted_classes, levels = c("neg", "pos"))
+  accuracy <- sum(predicted_classes == fold_data$obs) / nrow(fold_data)
+  fold_accuracies[as.numeric(gsub("Fold", "", fold))] <- accuracy
+  cat("Fold", fold, "Accuracy:", accuracy, "\n")
+}
+mean_accuracy <- mean(fold_accuracies)
+legend("bottomright", legend=c("Linear regression", "Decision tree","Random forest","SVM","KNN","AdaBoost","NN"), col=c("blue", "red","green","yellow","purple","gray","orange"), lty=c(1,1,2,1,2,1,1),cex = 0.75,bty="n",xjust=1,yjust=0)
+
